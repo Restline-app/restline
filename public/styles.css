@@ -319,7 +319,7 @@ h3 {
   color: var(--fg-2);
 }
 
-.compare thead th.rl { color: var(--red); }
+.compare thead th.rl { color: #FF453A; }
 .compare tbody th { width: 80px; color: var(--fg-2); }
 .compare td { color: var(--fg-body); }
 .compare td.rl { color: var(--fg); }
