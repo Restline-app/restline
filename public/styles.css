@@ -465,7 +465,8 @@ h3 {
 .foot-links {
   margin-top: 14px;
   display: flex;
-  gap: 20px;
+  flex-wrap: wrap;
+  gap: 8px 20px;
   font-size: 15px;
   color: var(--fg-body);
 }
