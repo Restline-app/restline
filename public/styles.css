@@ -63,9 +63,12 @@ button { font: inherit; color: inherit; }
 img, svg, video { display: block; }
 a { color: inherit; }
 
-:focus { outline: none; }
-:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-.field:focus-visible { outline-offset: 0; }
+:focus { outline: 2px solid var(--focus); outline-offset: 2px; }
+.field:focus { outline-offset: 0; }
+
+@supports selector(:focus-visible) {
+  :focus:not(:focus-visible) { outline: none; }
+}
 
 .col {
   width: 100%;
@@ -89,7 +92,7 @@ a { color: inherit; }
   top: 0;
   left: 0;
   right: 0;
-  height: 620px;
+  height: 460px;
   pointer-events: none;
   z-index: 0;
   background: radial-gradient(ellipse 62% 48% at 50% 24%, rgba(224, 37, 43, 0.30), rgba(224, 37, 43, 0) 100%);
@@ -315,7 +318,7 @@ h3 {
   color: var(--fg-2);
 }
 
-.compare thead th.rl { color: var(--red); }
+.compare thead th.rl { color: #F0333A; }
 .compare tbody th { width: 80px; color: var(--fg-2); }
 .compare td { color: var(--fg-body); }
 .compare td.rl { color: var(--fg); }
@@ -548,6 +551,10 @@ h3 {
 /* Sheet */
 .sheet-root {
   position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
   inset: 0;
   z-index: 50;
 }
@@ -556,6 +563,10 @@ h3 {
 
 .sheet-backdrop {
   position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
   inset: 0;
   background: rgba(0, 0, 0, 0.65);
   touch-action: none;
@@ -610,6 +621,10 @@ h3 {
 .sheet-x::before {
   content: "";
   position: absolute;
+  top: 7px;
+  right: 7px;
+  bottom: 7px;
+  left: 7px;
   inset: 7px;
   border-radius: 50%;
   background: #3A3A3C;
@@ -665,7 +680,7 @@ h3 {
   outline: none;
 }
 
-.field::placeholder { color: var(--fg-3); opacity: 1; }
+.field::placeholder { color: #98989D; opacity: 1; }
 .field:focus { border-color: var(--focus); }
 .field[aria-invalid="true"] { border-color: rgba(255, 255, 255, 0.6); }
 .field + .btn { margin-top: 12px; }
@@ -696,7 +711,7 @@ html.js .reveal.now { transition: none; }
   .pill { font-size: 12px; padding: 0 10px; gap: 6px; max-width: 100%; }
 }
 
-@media (max-height: 700px) {
+@media (max-width: 380px) and (max-height: 700px) {
   h1 { font-size: clamp(30px, 8.5vw, 38px); }
   .clip { max-height: 42vh; max-height: 42svh; }
 }

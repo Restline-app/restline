@@ -10,8 +10,7 @@
 <link rel="icon" href="/favicon.ico" sizes="32x32">
 <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32.png">
 <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
-<link rel="preload" href="/assets/inter.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="preload" href="/media/restline-page-poster.jpg" as="image" fetchpriority="high">
+<link rel="preload" href="/media/restline-page-poster.webp" as="image" fetchpriority="high">
 <link rel="stylesheet" href="/styles.css">
 <script src="/app.js" defer></script>
 </head>
@@ -32,7 +31,7 @@
 
   <section class="clip-wrap">
     <div class="clip">
-      <video class="clip-video" id="clip" autoplay muted loop playsinline preload="metadata" poster="/media/restline-page-poster.jpg" width="720" height="1280" disablepictureinpicture disableremoteplayback>
+      <video class="clip-video" id="clip" autoplay muted loop playsinline preload="metadata" poster="/media/restline-page-poster.webp" width="720" height="1280" disablepictureinpicture disableremoteplayback>
         <source src="/media/restline-page-clip-720.mp4" type="video/mp4">
       </video>
     </div>
@@ -80,7 +79,7 @@
     <div class="card card-table reveal">
       <table class="compare">
         <thead>
-          <tr><th scope="col"></th><th scope="col">A watch</th><th scope="col" class="rl">Restline</th></tr>
+          <tr><td></td><th scope="col">A watch</th><th scope="col" class="rl">Restline</th></tr>
         </thead>
         <tbody>
           <tr><th scope="row">Measures</th><td>All day, on the wrist</td><td class="rl">One morning read, on the fingertip</td></tr>
@@ -138,12 +137,12 @@
   </div>
 </footer>
 
-<div class="bar">
+<aside class="bar">
   <div class="col">
     <button class="btn btn-price" type="button" data-tap="bar"><span>Get it</span><span class="sep" aria-hidden="true"></span><span>$9.99 a week</span></button>
     <p class="bar-note">No trial. Cancel in the app.</p>
   </div>
-</div>
+</aside>
 
 <div class="sheet-root" id="sheet" hidden>
   <div class="sheet-backdrop" data-close></div>
@@ -154,7 +153,7 @@
     <div class="step" id="step-1">
       <h2 class="sheet-title" id="sheet-title-1">Not released yet.</h2>
       <p class="sheet-body">Nothing was charged. Leave an email and the release day gets sent — one email, nothing else.</p>
-      <form id="email-form" novalidate>
+      <form id="email-form">
         <input class="field" id="email" type="email" name="email" placeholder="Email" autocomplete="email" inputmode="email" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="send" required>
         <button class="btn" type="submit">Notify at release</button>
         <button class="btn-text" type="button" data-close>No thanks</button>
@@ -164,9 +163,9 @@
     <div class="step" id="step-2" hidden>
       <h2 class="sheet-title" id="sheet-title-2"><svg class="noted" width="28" height="28" viewBox="0 0 28 28" fill="none" stroke="#E0252B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="14" cy="14" r="12"/><path d="M8.5 14.5 12 18l7.5-8"/></svg>Noted.</h2>
       <p class="sheet-body">One email, on the release day. Nothing before it.</p>
-      <p class="sheet-q">One question: what else would you want it to measure?</p>
+      <p class="sheet-q" id="sheet-q">One question: what else would you want it to measure?</p>
       <form id="answer-form" novalidate>
-        <input class="field" id="answer" type="text" name="answer" placeholder="One line is plenty" autocomplete="off" maxlength="500" enterkeyhint="send">
+        <input class="field" id="answer" type="text" name="answer" placeholder="One line is plenty" aria-labelledby="sheet-q" autocomplete="off" maxlength="500" enterkeyhint="send">
         <button class="btn" type="submit">Send</button>
         <button class="btn-text" type="button" data-close>Done</button>
       </form>

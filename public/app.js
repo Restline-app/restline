@@ -52,11 +52,13 @@
   }
 
   var vid = readCookie(COOKIE);
-  if (!/^[a-z0-9]{24}$/.test(vid)) vid = randomId();
-  try {
-    doc.cookie = COOKIE + '=' + vid + '; Max-Age=' + NINETY_DAYS + '; Path=/; SameSite=Lax' +
-      (location.protocol === 'https:' ? '; Secure' : '');
-  } catch (e) {}
+  if (!/^[a-z0-9]{24}$/.test(vid)) {
+    vid = randomId();
+    try {
+      doc.cookie = COOKIE + '=' + vid + '; Max-Age=' + NINETY_DAYS + '; Path=/; SameSite=Lax' +
+        (location.protocol === 'https:' ? '; Secure' : '');
+    } catch (e) {}
+  }
 
   /* ---------- context ---------- */
 
@@ -136,6 +138,16 @@
     post(body);
   }
 
+  /* ---------- the tap: bound before anything else, counted before the sheet opens ---------- */
+
+  var tapButtons = doc.querySelectorAll('[data-tap]');
+  for (var b = 0; b < tapButtons.length; b++) {
+    tapButtons[b].addEventListener('click', function (ev) {
+      try { send('tap', { button: this.getAttribute('data-tap') || '' }); } catch (e) {}
+      try { openSheet(); } catch (e) {}
+    });
+  }
+
   /* ---------- events ---------- */
 
   send('pageview');
@@ -148,7 +160,10 @@
     beacon('leave', { seconds: Math.max(0, Math.round((Date.now() - t0) / 1000)) });
   }
   win.addEventListener('pagehide', leave);
-  doc.addEventListener('visibilitychange', function () { if (doc.visibilityState === 'hidden') leave(); });
+  win.addEventListener('pageshow', function () { left = false; });
+  doc.addEventListener('visibilitychange', function () {
+    if (doc.visibilityState === 'hidden') leave(); else left = false;
+  });
 
   var video = doc.getElementById('clip');
   var videoReported = false;
@@ -157,7 +172,7 @@
     videoReported = true;
     send('video', { video: state });
   }
-  if (video) {
+  try { if (video) {
     video.addEventListener('playing', function () { reportVideo('playing'); });
     video.addEventListener('error', function () { reportVideo('blocked'); });
     try {
@@ -166,14 +181,14 @@
       var p = video.play();
       if (p && typeof p.then === 'function') p.then(null, function () { reportVideo('blocked'); });
     } catch (e) { reportVideo('blocked'); }
-    setTimeout(function () { if (!videoReported) reportVideo('blocked'); }, 10000);
+    setTimeout(function () { if (!videoReported && video.paused) reportVideo('blocked'); }, 15000);
     video.parentNode.addEventListener('click', function () {
       if (video.paused) { try { var q = video.play(); if (q && q.then) q.then(null, function () {}); } catch (e) {} }
     });
-  }
+  } } catch (e) {}
 
   var price = doc.getElementById('price');
-  if (price && 'IntersectionObserver' in win) {
+  try { if (price && 'IntersectionObserver' in win) {
     var seen = false;
     var seenObs = new IntersectionObserver(function (entries) {
       for (var i = 0; i < entries.length; i++) {
@@ -185,14 +200,14 @@
       }
     }, { threshold: 0.5 });
     seenObs.observe(price);
-  }
+  } } catch (e) {}
 
   /* ---------- reveal ---------- */
 
   var reveals = doc.querySelectorAll('.reveal');
   var reduced = false;
   try { reduced = win.matchMedia && win.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) {}
-  if (reduced || !('IntersectionObserver' in win)) {
+  try { if (reduced || !('IntersectionObserver' in win)) {
     for (var r = 0; r < reveals.length; r++) reveals[r].classList.add('now', 'in');
   } else {
     var vh = win.innerHeight || root.clientHeight;
@@ -209,7 +224,19 @@
       if (el.getBoundingClientRect().top < vh) el.classList.add('now', 'in');
       else revealObs.observe(el);
     }
-  }
+    // insurance: anything scrolled into view that the observer did not report
+    var revealRaf = 0;
+    win.addEventListener('scroll', function () {
+      if (revealRaf) return;
+      revealRaf = win.requestAnimationFrame(function () {
+        revealRaf = 0;
+        var h = win.innerHeight || root.clientHeight;
+        for (var i = 0; i < reveals.length; i++) {
+          if (!reveals[i].classList.contains('in') && reveals[i].getBoundingClientRect().top < h) reveals[i].classList.add('in');
+        }
+      });
+    }, { passive: true });
+  } } catch (e) { showAll(); }
 
   /* ---------- sheet ---------- */
 
@@ -288,15 +315,6 @@
     };
     win.visualViewport.addEventListener('resize', onViewport);
     win.visualViewport.addEventListener('scroll', onViewport);
-  }
-
-  /* Tap: counted first, then the sheet */
-  var tapButtons = doc.querySelectorAll('[data-tap]');
-  for (var b = 0; b < tapButtons.length; b++) {
-    tapButtons[b].addEventListener('click', function (ev) {
-      try { send('tap', { button: this.getAttribute('data-tap') || '' }); } catch (e) {}
-      try { openSheet(); } catch (e) {}
-    });
   }
 
   sheetRoot.addEventListener('click', function (ev) {

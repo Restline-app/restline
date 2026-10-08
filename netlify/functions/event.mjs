@@ -248,11 +248,13 @@ function newSummary(day, hour) {
   return { v: SUMMARY_VERSION, day, hour, rows: 0, failed: 0, buckets: Object.create(null) };
 }
 
+// buckets are keyed by flag|source; leave maps vid -> largest seconds seen (one beacon per hide, cumulative)
+
 function newBucket() {
   return {
     pv: [], tap: [], email: [], answer: [], seen: [],
     n_pv: 0, n_tap: 0, n_tap_card: 0, n_tap_bar: 0, n_email: 0, n_answer: 0,
-    video_playing: 0, video_blocked: 0, leave_n: 0, leave_seconds: 0,
+    video_playing: 0, video_blocked: 0, leave: {},
     device: { ios: 0, android: 0, other: 0 },
     inapp: { tiktok: 0, instagram: 0, facebook: 0, none: 0 }
   };
@@ -297,9 +299,11 @@ function addRow(s, row) {
     case 'seen':
       pushUnique(b.seen, row.vid);
       break;
-    case 'leave':
-      b.leave_n += 1; b.leave_seconds += Number(row.seconds) || 0;
+    case 'leave': {
+      const sec = Number(row.seconds) || 0;
+      if (row.vid && !(b.leave[row.vid] >= sec)) b.leave[row.vid] = sec;
       break;
+    }
     default:
       break;
   }
@@ -307,7 +311,8 @@ function addRow(s, row) {
 
 function mergeBucket(a, b) {
   for (const set of ['pv', 'tap', 'email', 'answer', 'seen']) for (const v of b[set] || []) pushUnique(a[set], v);
-  for (const n of ['n_pv', 'n_tap', 'n_tap_card', 'n_tap_bar', 'n_email', 'n_answer', 'video_playing', 'video_blocked', 'leave_n', 'leave_seconds']) a[n] += b[n] || 0;
+  for (const n of ['n_pv', 'n_tap', 'n_tap_card', 'n_tap_bar', 'n_email', 'n_answer', 'video_playing', 'video_blocked']) a[n] += b[n] || 0;
+  for (const vid of Object.keys(b.leave || {})) if (!(a.leave[vid] >= b.leave[vid])) a.leave[vid] = b.leave[vid];
   for (const k of Object.keys(a.device)) a.device[k] += (b.device && b.device[k]) || 0;
   for (const k of Object.keys(a.inapp)) a.inapp[k] += (b.inapp && b.inapp[k]) || 0;
 }
@@ -338,10 +343,16 @@ function finalizeBucket(b) {
     answer_events: b.n_answer,
     seen: b.seen.length,
     video: { playing: b.video_playing, blocked: b.video_blocked },
-    leave: { n: b.leave_n, avg_seconds: b.leave_n ? Math.round(b.leave_seconds / b.leave_n) : 0 },
+    leave: leaveStats(b.leave),
     device: { ...b.device },
     inapp: { ...b.inapp }
   };
+}
+
+function leaveStats(map) {
+  const values = Object.values(map || {});
+  const sum = values.reduce((t, v) => t + v, 0);
+  return { n: values.length, avg_seconds: values.length ? Math.round(sum / values.length) : 0 };
 }
 
 function finalizeDay(s) {
