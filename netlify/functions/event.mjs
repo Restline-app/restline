@@ -20,7 +20,7 @@ const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const MAX_BODY = 8192;
 const COOKIE_MAX_AGE = 90 * 24 * 60 * 60;
 const SUMMARY_VERSION = 3;
-const BOT_UA = /facebookexternalhit|Facebot|Bytespider|HeadlessChrome|PhantomJS|Lighthouse/i;
+const BOT_UA = /facebookexternalhit|Facebot|meta-external|Bytespider|TikTokSpider|Googlebot|AdsBot|HeadlessChrome|PhantomJS|Lighthouse/i;
 const HOUR_GRACE_MS = 2 * 60 * 1000;
 const READ_CONCURRENCY = 32;
 const HOUR_CONCURRENCY = 4;
@@ -376,10 +376,12 @@ function leaveStats(map) {
   return { n: values.length, avg_seconds: values.length ? Math.round(sum / values.length) : 0 };
 }
 
-// Flags are decided per visitor, not per row: first every vid whose pageview carried bot evidence goes
-// to the bot bucket with all its rows; then a vid with a pageview in a gate source keeps that source for
-// all its rows, and a vid with a smoke pageview keeps smoke (gate > smoke > no_utm). Unique-vid lists and
-// the per-vid leave map move; per-row event counts stay where the rows were stored.
+// Flags are decided per visitor, not per row, in the order bot > smoke > gate > no_utm: first every vid
+// whose pageview carried bot evidence goes to the bot bucket with all its rows; then a vid with a smoke
+// pageview is smoke everywhere (it is pulled out of every other bucket, gate buckets included); a vid
+// with a gate pageview keeps that source for its no_utm rows (gate buckets keep each other's vids); a
+// no_utm vid with no home stays. Unique-vid lists and the per-vid leave map move; per-row event counts
+// stay where the rows were stored.
 function resolveVisitors(original) {
   const buckets = Object.create(null);
   for (const key of Object.keys(original)) buckets[key] = JSON.parse(JSON.stringify(original[key]));
@@ -391,30 +393,27 @@ function resolveVisitors(original) {
   for (const key of keys) for (const v of buckets[key].bots || []) botVids.add(v);
   if (botVids.size) for (const key of keys) moveVids(buckets[key], bot, botVids);
 
-  const home = Object.create(null); // vid -> bucket key it belongs to
-  for (const key of keys) if (flagOfKey(key) === 'gate') for (const v of buckets[key].pv) if (!home[v]) home[v] = key;
+  const home = Object.create(null); // vid -> bucket key it belongs to; smoke pageviews first, then gate
   for (const key of keys) if (flagOfKey(key) === 'smoke') for (const v of buckets[key].pv) if (!home[v]) home[v] = key;
+  for (const key of keys) if (flagOfKey(key) === 'gate') for (const v of buckets[key].pv) if (!home[v]) home[v] = key;
+  const moves = (flag, target) => {
+    if (!target) return false;
+    const targetFlag = flagOfKey(target);
+    if (targetFlag === 'smoke') return true;            // smoke pulls from every other bucket
+    return targetFlag === 'gate' && flag === 'no_utm';  // gate pulls from no_utm only
+  };
   for (const key of keys) {
     const flag = flagOfKey(key);
-    if (flag === 'gate') continue;
     const b = buckets[key];
     const byTarget = new Map();
-    for (const set of ['pv', 'tap', 'email', 'answer', 'seen']) {
-      for (const v of b[set]) {
-        const target = home[v];
-        if (!target || target === key) continue;
-        if (flag === 'smoke' && flagOfKey(target) !== 'gate') continue;
-        if (!byTarget.has(target)) byTarget.set(target, new Set());
-        byTarget.get(target).add(v);
-      }
-    }
-    for (const v of Object.keys(b.leave || {})) {
+    const consider = (v) => {
       const target = home[v];
-      if (!target || target === key) continue;
-      if (flag === 'smoke' && flagOfKey(target) !== 'gate') continue;
+      if (!target || target === key || !moves(flag, target)) return;
       if (!byTarget.has(target)) byTarget.set(target, new Set());
       byTarget.get(target).add(v);
-    }
+    };
+    for (const set of ['pv', 'tap', 'email', 'answer', 'seen']) for (const v of b[set]) consider(v);
+    for (const v of Object.keys(b.leave || {})) consider(v);
     for (const [target, vids] of byTarget) moveVids(b, buckets[target], vids);
   }
   return { buckets, bot };
