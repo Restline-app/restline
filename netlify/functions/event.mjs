@@ -1,8 +1,10 @@
 // One function, two routes (via netlify.toml rewrites):
-//   POST /api/event            stores one raw row per event in Netlify Blobs (store "events", key day/hour/id)
+//   POST /api/event            stores one raw row per event in Netlify Blobs (store "events", key day/hour/id-event)
 //   GET  /admin?key=ADMIN_KEY  counts per day: uniques (by vid) per utm_source and blended, taps, emails, answers
 //
-// Rows are never deduped on write. Closed hours are summarised once and cached in the "summaries" store.
+// Rows are never deduped on write. Closed hours are summarised once (counts and vid lists only, no
+// addresses or answers) and cached in the "summaries" store; the email and answer tables always read
+// the raw rows, so deleting a row in "events" is the only deletion needed.
 // Rows with utm_campaign=smoke and rows without utm_source are stored but kept out of the gate counts.
 
 import { getStore } from '@netlify/blobs';
@@ -13,19 +15,21 @@ const DEVICES = new Set(['ios', 'android', 'other']);
 const INAPPS = new Set(['tiktok', 'instagram', 'facebook', 'none']);
 const VIDEO_STATES = new Set(['playing', 'blocked']);
 const BUTTONS = new Set(['card', 'bar']);
-const VID_RE = /^[A-Za-z0-9_-]{8,64}$/;
+const VID_RE = /^[a-z0-9]{24}$/;
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const MAX_BODY = 8192;
 const COOKIE_MAX_AGE = 90 * 24 * 60 * 60;
-const SUMMARY_VERSION = 1;
+const SUMMARY_VERSION = 2;
 const HOUR_GRACE_MS = 2 * 60 * 1000;
-const READ_CONCURRENCY = 24;
+const READ_CONCURRENCY = 32;
 const HOUR_CONCURRENCY = 4;
+const ADMIN_BUDGET_MS = 8000;
+const SITE_ORIGINS = ['https://restline.app', 'https://www.restline.app'];
 
 export default async function handler(req) {
   const url = new URL(req.url);
   const path = url.pathname.replace(/\/+$/, '');
-  const isAdmin = path.endsWith('/admin') || (req.method === 'GET' && url.searchParams.has('key'));
+  const isAdmin = req.method === 'GET' || path.endsWith('/admin');
   try {
     if (isAdmin) return await admin(req, url);
     if (req.method === 'POST') return await event(req);
@@ -40,6 +44,9 @@ export default async function handler(req) {
 /* ---------------- POST /api/event ---------------- */
 
 async function event(req) {
+  const origin = req.headers.get('origin');
+  if (origin && !allowedOrigin(origin)) return json({ error: 'forbidden' }, 403);
+
   let text;
   try { text = await req.text(); } catch { return json({ error: 'bad body' }, 400); }
   if (text.length > MAX_BODY) return json({ error: 'too large' }, 413);
@@ -65,7 +72,7 @@ async function event(req) {
     utm_content: clean(data.utm_content, 100),
     device: DEVICES.has(data.device) ? data.device : 'other',
     inapp: INAPPS.has(data.inapp) ? data.inapp : 'none',
-    ref: clean(data.ref, 500).replace(/[?#][\s\S]*$/, '')
+    ref: refOrigin(data.ref)
   };
   row.flag = flagOf(row);
 
@@ -89,7 +96,7 @@ async function event(req) {
 
   const day = received.slice(0, 10);
   const hour = received.slice(11, 13);
-  const key = `${day}/${hour}/${now.getTime()}-${randomBytes(4).toString('hex')}`;
+  const key = `${day}/${hour}/${now.getTime()}-${randomBytes(4).toString('hex')}-${name}`;
   const store = getStore({ name: 'events', consistency: 'strong' });
   await store.setJSON(key, row);
 
@@ -100,6 +107,16 @@ async function event(req) {
       'Set-Cookie': `rl_v=${vid}; Max-Age=${COOKIE_MAX_AGE}; Path=/; SameSite=Lax; Secure`
     }
   });
+}
+
+function allowedOrigin(origin) {
+  const allowed = new Set(SITE_ORIGINS);
+  for (const v of [process.env.URL, process.env.DEPLOY_PRIME_URL, process.env.DEPLOY_URL]) if (v) allowed.add(v.replace(/\/$/, ''));
+  if (allowed.has(origin)) return true;
+  try {
+    const h = new URL(origin).hostname;
+    return h === 'localhost' || h === '127.0.0.1';
+  } catch { return false; }
 }
 
 function flagOf(row) {
@@ -121,6 +138,7 @@ async function admin(req, url) {
   const only = dayParam(url.searchParams.get('day'));
   const from = only || dayParam(url.searchParams.get('from'));
   const to = only || dayParam(url.searchParams.get('to'));
+  const deadline = Date.now() + ADMIN_BUDGET_MS;
 
   const events = getStore({ name: 'events', consistency: 'strong' });
   const summaries = getStore({ name: 'summaries', consistency: 'strong' });
@@ -130,40 +148,60 @@ async function admin(req, url) {
   if (table === 'raw') {
     if (!only) return json({ error: 'table=raw needs day=YYYY-MM-DD' }, 400);
     const keys = await listKeys(events, `${only}/`);
-    const rows = (await mapLimit(keys, READ_CONCURRENCY, (k) => events.get(k, { type: 'json' }))).filter(Boolean);
-    rows.sort((a, b) => (a.received < b.received ? -1 : a.received > b.received ? 1 : 0));
-    if (format === 'csv') return csv(rows, RAW_COLUMNS, `restline-raw-${only}.csv`);
-    return json({ day: only, rows }, 200, noStore());
+    const read = await readRows(events, keys, deadline);
+    read.rows.sort(byReceived);
+    const partial = read.failed > 0 || read.skipped > 0;
+    if (format === 'csv') return csv(read.rows, RAW_COLUMNS, `restline-raw-${only}.csv`, partial);
+    return json({ day: only, partial, failed: read.failed, skipped: read.skipped, rows: read.rows }, 200, noStore());
+  }
+
+  if (table === 'emails' || table === 'answers') {
+    const want = table === 'emails' ? 'email' : 'answer';
+    const columns = want === 'email' ? EMAIL_COLUMNS : ANSWER_COLUMNS;
+    const got = await eventRows(events, days, want, deadline);
+    const list = got.rows.map((r) => pick(r, columns));
+    const partial = got.failed > 0 || got.skipped > 0;
+    if (format === 'csv') return csv(list, columns, want === 'email' ? 'restline-emails.csv' : 'restline-answers.csv', partial);
+    return json({ generated: new Date().toISOString(), partial, [table]: list }, 200, noStore());
   }
 
   const perDay = [];
+  const pending = [];
+  let failed = 0;
   for (const day of days) {
     const hours = (await listDirs(events, `${day}/`)).sort();
-    const hourSummaries = await mapLimit(hours, HOUR_CONCURRENCY, (hour) => hourSummary(events, summaries, day, hour));
     const merged = newSummary(day, '');
-    for (const h of hourSummaries) mergeSummary(merged, h);
+    const results = await mapLimit(hours, HOUR_CONCURRENCY, async (hour) => {
+      if (Date.now() > deadline) { pending.push(`${day}/${hour}`); return null; }
+      return hourSummary(events, summaries, day, hour);
+    });
+    for (const h of results) {
+      if (!h) continue;
+      failed += h.failed || 0;
+      mergeSummary(merged, h);
+    }
     perDay.push(merged);
   }
   const total = newSummary('', '');
   for (const d of perDay) mergeSummary(total, d);
 
+  const emails = await eventRows(events, days, 'email', deadline);
+  const answers = await eventRows(events, days, 'answer', deadline);
+  const partial = pending.length > 0 || failed > 0 || emails.failed + emails.skipped + answers.failed + answers.skipped > 0;
+
   const out = {
     generated: new Date().toISOString(),
     from: days[0] || null,
     to: days[days.length - 1] || null,
+    partial,
+    pending,
     days: perDay.map(finalizeDay),
     total: finalizeDay(total),
-    emails: perDay.flatMap((d) => d.emails),
-    answers: perDay.flatMap((d) => d.answers)
+    emails: emails.rows.map((r) => pick(r, EMAIL_COLUMNS)),
+    answers: answers.rows.map((r) => pick(r, ANSWER_COLUMNS))
   };
 
-  if (table === 'emails') {
-    return format === 'csv' ? csv(out.emails, EMAIL_COLUMNS, 'restline-emails.csv') : json({ generated: out.generated, emails: out.emails }, 200, noStore());
-  }
-  if (table === 'answers') {
-    return format === 'csv' ? csv(out.answers, ANSWER_COLUMNS, 'restline-answers.csv') : json({ generated: out.generated, answers: out.answers }, 200, noStore());
-  }
-  if (format === 'csv') return csv(summaryRows(out), SUMMARY_COLUMNS, 'restline-summary.csv');
+  if (format === 'csv') return csv(summaryRows(out), SUMMARY_COLUMNS, 'restline-summary.csv', partial);
   return json(out, 200, noStore());
 }
 
@@ -176,17 +214,38 @@ async function hourSummary(events, summaries, day, hour) {
     if (cached && cached.v === SUMMARY_VERSION) return cached;
   }
   const keys = await listKeys(events, `${day}/${hour}/`);
-  const rows = (await mapLimit(keys, READ_CONCURRENCY, (k) => events.get(k, { type: 'json' }))).filter(Boolean);
+  const read = await readRows(events, keys, Infinity);
   const s = newSummary(day, hour);
-  for (const row of rows) addRow(s, row);
-  if (closed) await summaries.setJSON(cacheKey, s).catch(() => {});
+  for (const row of read.rows) addRow(s, row);
+  s.failed = read.failed;
+  if (closed && read.failed === 0) await summaries.setJSON(cacheKey, s).catch(() => {});
   return s;
+}
+
+// Rows of one event type across days, read straight from the events store (the key names the event).
+async function eventRows(events, days, want, deadline) {
+  const keys = [];
+  for (const day of days) {
+    for (const k of await listKeys(events, `${day}/`)) {
+      const ev = keyEvent(k);
+      if (ev === want || ev === null) keys.push(k);
+    }
+  }
+  const read = await readRows(events, keys, deadline);
+  read.rows = read.rows.filter((r) => r.event === want);
+  read.rows.sort(byReceived);
+  return read;
+}
+
+function keyEvent(key) {
+  const m = /-([a-z]+)$/.exec(key);
+  return m && EVENTS.has(m[1]) ? m[1] : null;
 }
 
 /* ---------------- summaries ---------------- */
 
 function newSummary(day, hour) {
-  return { v: SUMMARY_VERSION, day, hour, rows: 0, buckets: {}, emails: [], answers: [] };
+  return { v: SUMMARY_VERSION, day, hour, rows: 0, failed: 0, buckets: Object.create(null) };
 }
 
 function newBucket() {
@@ -201,7 +260,15 @@ function newBucket() {
 
 function bucketKey(row) {
   const flag = row.flag || flagOf(row);
-  return flag === 'gate' ? `gate|${row.utm_source}` : flag === 'smoke' ? `smoke|${row.utm_source || ''}` : 'no_utm|';
+  const source = flag === 'no_utm' ? '' : String(row.utm_source || '');
+  return `${flag}|${encodeURIComponent(source)}`;
+}
+
+function splitBucketKey(key) {
+  const i = key.indexOf('|');
+  let source = key.slice(i + 1);
+  try { source = decodeURIComponent(source); } catch { /* keep as is */ }
+  return [key.slice(0, i), source];
 }
 
 function addRow(s, row) {
@@ -220,11 +287,9 @@ function addRow(s, row) {
       break;
     case 'email':
       pushUnique(b.email, row.vid); b.n_email += 1;
-      s.emails.push(pick(row, EMAIL_COLUMNS));
       break;
     case 'answer':
       pushUnique(b.answer, row.vid); b.n_answer += 1;
-      s.answers.push(pick(row, ANSWER_COLUMNS));
       break;
     case 'video':
       if (row.video === 'playing') b.video_playing += 1; else b.video_blocked += 1;
@@ -241,7 +306,7 @@ function addRow(s, row) {
 }
 
 function mergeBucket(a, b) {
-  for (const set of ['pv', 'tap', 'email', 'answer', 'seen']) for (const v of b[set]) pushUnique(a[set], v);
+  for (const set of ['pv', 'tap', 'email', 'answer', 'seen']) for (const v of b[set] || []) pushUnique(a[set], v);
   for (const n of ['n_pv', 'n_tap', 'n_tap_card', 'n_tap_bar', 'n_email', 'n_answer', 'video_playing', 'video_blocked', 'leave_n', 'leave_seconds']) a[n] += b[n] || 0;
   for (const k of Object.keys(a.device)) a.device[k] += (b.device && b.device[k]) || 0;
   for (const k of Object.keys(a.inapp)) a.inapp[k] += (b.inapp && b.inapp[k]) || 0;
@@ -249,13 +314,12 @@ function mergeBucket(a, b) {
 
 function mergeSummary(target, s) {
   if (!s) return;
-  target.rows += s.rows;
-  for (const [key, b] of Object.entries(s.buckets)) {
+  target.rows += s.rows || 0;
+  target.failed += s.failed || 0;
+  for (const key of Object.keys(s.buckets || {})) {
     if (!target.buckets[key]) target.buckets[key] = newBucket();
-    mergeBucket(target.buckets[key], b);
+    mergeBucket(target.buckets[key], s.buckets[key]);
   }
-  target.emails.push(...s.emails);
-  target.answers.push(...s.answers);
 }
 
 function finalizeBucket(b) {
@@ -281,12 +345,13 @@ function finalizeBucket(b) {
 }
 
 function finalizeDay(s) {
-  const sources = {};
+  const sources = Object.create(null);
   const blended = newBucket();
   const smoke = newBucket();
   const noUtm = newBucket();
-  for (const [key, b] of Object.entries(s.buckets)) {
-    const [flag, source] = key.split('|');
+  for (const key of Object.keys(s.buckets)) {
+    const b = s.buckets[key];
+    const [flag, source] = splitBucketKey(key);
     if (flag === 'gate') {
       sources[source] = finalizeBucket(b);
       mergeBucket(blended, b);
@@ -324,7 +389,7 @@ function summaryRows(out) {
     inapp_tiktok: f.inapp.tiktok, inapp_instagram: f.inapp.instagram, inapp_facebook: f.inapp.facebook, inapp_none: f.inapp.none
   });
   for (const d of [...out.days, out.total]) {
-    for (const [source, f] of Object.entries(d.sources)) flat(d.day, 'gate', source, f);
+    for (const source of Object.keys(d.sources)) flat(d.day, 'gate', source, d.sources[source]);
     flat(d.day, 'gate', 'blended', d.blended);
     flat(d.day, 'excluded', 'smoke', d.excluded.smoke);
     flat(d.day, 'excluded', 'no_utm', d.excluded.no_utm);
@@ -332,23 +397,24 @@ function summaryRows(out) {
   return rows;
 }
 
-function csv(rows, columns, filename) {
+function csv(rows, columns, filename, partial) {
   const lines = [columns.join(',')];
-  for (const row of rows) lines.push(columns.map((c) => cell(row[c], c)).join(','));
+  for (const row of rows) lines.push(columns.map((c) => cell(row[c])).join(','));
   return new Response(lines.join('\r\n') + '\r\n', {
     status: 200,
     headers: {
       ...noStore(),
       'Content-Type': 'text/csv; charset=utf-8',
-      'Content-Disposition': `attachment; filename="${filename}"`
+      'Content-Disposition': `attachment; filename="${filename}"`,
+      'X-Partial': partial ? 'true' : 'false'
     }
   });
 }
 
-function cell(value, column) {
+function cell(value) {
   if (value === undefined || value === null) return '';
   let s = String(value);
-  if (column !== 'email' ? /^[=+\-@\t\r]/.test(s) : s.startsWith('=')) s = "'" + s;
+  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
   return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
@@ -364,6 +430,24 @@ async function listKeys(store, prefix) {
   return (res.blobs || []).map((b) => b.key);
 }
 
+// Reads rows with bounded concurrency, one retry per key, and a deadline; reports what it could not read.
+async function readRows(store, keys, deadline) {
+  const out = { rows: [], failed: 0, skipped: 0 };
+  await mapLimit(keys, READ_CONCURRENCY, async (key) => {
+    if (Date.now() > deadline) { out.skipped += 1; return; }
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const row = await store.get(key, { type: 'json' });
+        if (row && typeof row === 'object') out.rows.push(row);
+        return;
+      } catch (err) {
+        if (attempt === 1) { console.error('read failed', key, err); out.failed += 1; }
+      }
+    }
+  });
+  return out;
+}
+
 async function mapLimit(items, limit, fn) {
   const out = new Array(items.length);
   let next = 0;
@@ -376,6 +460,8 @@ async function mapLimit(items, limit, fn) {
   await Promise.all(workers);
   return out;
 }
+
+function byReceived(a, b) { return a.received < b.received ? -1 : a.received > b.received ? 1 : 0; }
 
 function pushUnique(arr, v) { if (v && !arr.includes(v)) arr.push(v); }
 
@@ -391,6 +477,14 @@ function clean(v, max) {
   if (typeof v !== 'string') return '';
   // eslint-disable-next-line no-control-regex
   return v.replace(/[\u0000-\u001F\u007F]/g, ' ').trim().slice(0, max);
+}
+
+function refOrigin(v) {
+  if (typeof v !== 'string' || !v) return '';
+  try {
+    const o = new URL(v).origin;
+    return o === 'null' ? '' : o.slice(0, 200);
+  } catch { return ''; }
 }
 
 function validTs(v) {
