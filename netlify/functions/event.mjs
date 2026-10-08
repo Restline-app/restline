@@ -65,7 +65,7 @@ async function event(req) {
     utm_content: clean(data.utm_content, 100),
     device: DEVICES.has(data.device) ? data.device : 'other',
     inapp: INAPPS.has(data.inapp) ? data.inapp : 'none',
-    ref: clean(data.ref, 500)
+    ref: clean(data.ref, 500).replace(/[?#][\s\S]*$/, '')
   };
   row.flag = flagOf(row);
 

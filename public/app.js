@@ -82,7 +82,7 @@
     utm_content: param('utm_content'),
     device: device,
     inapp: inapp,
-    ref: (doc.referrer || '').slice(0, 500)
+    ref: (doc.referrer || '').replace(/[?#][\s\S]*$/, '').slice(0, 500)
   };
 
   /* ---------- transport ---------- */
