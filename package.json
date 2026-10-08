@@ -1,0 +1,12 @@
+{
+  "name": "restline",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Restline landing page: static site plus one Netlify Function.",
+  "dependencies": {
+    "@netlify/blobs": "^11.1.4"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
