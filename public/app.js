@@ -67,6 +67,13 @@
     return v ? String(v).slice(0, 100) : '';
   }
 
+  function refOrigin(v) {
+    if (!v) return '';
+    try { var o = new URL(v).origin; return o === 'null' ? '' : o; } catch (e) {}
+    var m = /^[a-z]+:\/\/[^\/?#]+/i.exec(v);
+    return m ? m[0] : '';
+  }
+
   var ua = navigator.userAgent || '';
   var device = (/iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)) ? 'ios'
     : /Android/.test(ua) ? 'android' : 'other';
@@ -82,7 +89,7 @@
     utm_content: param('utm_content'),
     device: device,
     inapp: inapp,
-    ref: (doc.referrer || '').replace(/[?#][\s\S]*$/, '').slice(0, 500)
+    ref: refOrigin(doc.referrer)
   };
 
   /* ---------- transport ---------- */
@@ -160,6 +167,9 @@
       if (p && typeof p.then === 'function') p.then(null, function () { reportVideo('blocked'); });
     } catch (e) { reportVideo('blocked'); }
     setTimeout(function () { if (!videoReported) reportVideo('blocked'); }, 10000);
+    video.parentNode.addEventListener('click', function () {
+      if (video.paused) { try { var q = video.play(); if (q && q.then) q.then(null, function () {}); } catch (e) {} }
+    });
   }
 
   var price = doc.getElementById('price');

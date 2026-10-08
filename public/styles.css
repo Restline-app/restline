@@ -3,7 +3,17 @@
   src: url("/assets/inter.woff2") format("woff2");
   font-weight: 400 600;
   font-style: normal;
-  font-display: optional;
+  font-display: fallback;
+}
+
+/* Roboto sized to Inter's metrics, so the swap on Android moves nothing */
+@font-face {
+  font-family: "Inter Fallback";
+  src: local("Roboto");
+  size-adjust: 107.5%;
+  ascent-override: 90.12%;
+  descent-override: 22.44%;
+  line-gap-override: 0%;
 }
 
 :root {
@@ -36,7 +46,7 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--fg);
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", Inter, system-ui, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", Inter, "Inter Fallback", system-ui, sans-serif;
   font-size: 16px;
   line-height: 1.4;
   -webkit-font-smoothing: antialiased;
@@ -185,6 +195,13 @@ h1 {
   object-fit: contain;
   background: var(--bg);
 }
+
+.clip-video::-webkit-media-controls-start-playback-button {
+  display: none !important;
+  -webkit-appearance: none;
+}
+
+.clip-video::-webkit-media-controls { display: none !important; }
 
 .caption {
   margin-top: 14px;
@@ -440,6 +457,9 @@ h3 {
   text-decoration: underline;
   text-underline-offset: 3px;
   text-decoration-thickness: 1px;
+  display: inline-block;
+  padding: 12px 0;
+  margin: -12px 0;
 }
 
 /* Footer */
@@ -483,6 +503,8 @@ h3 {
   display: inline-flex;
   align-items: center;
   gap: 10px;
+  min-height: 44px;
+  margin: -11px 0;
   text-decoration: none;
   border-radius: 6px;
 }
@@ -520,7 +542,7 @@ h3 {
   text-align: center;
   font-size: 12px;
   line-height: 1.3;
-  color: var(--fg-body);
+  color: var(--fg-2);
 }
 
 /* Sheet */
@@ -645,7 +667,7 @@ h3 {
 
 .field::placeholder { color: var(--fg-3); opacity: 1; }
 .field:focus { border-color: var(--focus); }
-.field[aria-invalid="true"] { border-color: var(--red); }
+.field[aria-invalid="true"] { border-color: rgba(255, 255, 255, 0.6); }
 .field + .btn { margin-top: 12px; }
 
 .btn[disabled] { opacity: 0.7; cursor: default; }
