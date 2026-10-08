@@ -669,6 +669,10 @@ html.js .reveal.in { opacity: 1; transform: none; }
 html.js .reveal.now { transition: none; }
 
 /* Small phones */
+@media (max-width: 359px) {
+  .pill { font-size: 12px; padding: 0 10px; gap: 6px; max-width: 100%; }
+}
+
 @media (max-height: 700px) {
   h1 { font-size: clamp(30px, 8.5vw, 38px); }
   .clip { max-height: 42vh; max-height: 42svh; }

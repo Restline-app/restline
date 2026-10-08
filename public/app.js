@@ -214,6 +214,7 @@
   var lastFocus = null;
   var scrollY = 0;
   var sheetOpen = false;
+  var closeTimer = 0;
 
   function showStep(n) {
     step1.hidden = n !== 1;
@@ -225,6 +226,7 @@
   function openSheet() {
     if (sheetOpen) return;
     sheetOpen = true;
+    if (closeTimer) { clearTimeout(closeTimer); closeTimer = 0; }
     lastFocus = doc.activeElement;
     scrollY = win.pageYOffset || root.scrollTop || 0;
     doc.body.style.top = -scrollY + 'px';
@@ -252,11 +254,12 @@
     doc.body.style.top = '';
     win.scrollTo(0, scrollY);
     var done = function () {
+      closeTimer = 0;
       sheetRoot.hidden = true;
       panel.style.bottom = '';
       if (lastFocus && lastFocus.focus) { try { lastFocus.focus({ preventScroll: true }); } catch (e) {} }
     };
-    if (reduced) done(); else setTimeout(done, 320);
+    if (reduced) done(); else closeTimer = setTimeout(done, 320);
   }
 
   function fitSheet() {
