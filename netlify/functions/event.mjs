@@ -173,7 +173,14 @@ async function admin(req, url) {
     const merged = newSummary(day, '');
     const results = await mapLimit(hours, HOUR_CONCURRENCY, async (hour) => {
       if (Date.now() > deadline) { pending.push(`${day}/${hour}`); return null; }
-      return hourSummary(events, summaries, day, hour);
+      try {
+        return await hourSummary(events, summaries, day, hour);
+      } catch (err) {
+        console.error('hour failed', day, hour, err);
+        const s = newSummary(day, hour);
+        s.failed = 1;
+        return s;
+      }
     });
     for (const h of results) {
       if (!h) continue;
@@ -263,7 +270,11 @@ function newBucket() {
 function bucketKey(row) {
   const flag = row.flag || flagOf(row);
   const source = flag === 'no_utm' ? '' : String(row.utm_source || '');
-  return `${flag}|${encodeURIComponent(source)}`;
+  return `${flag}|${encodeSafe(source)}`;
+}
+
+function encodeSafe(s) {
+  try { return encodeURIComponent(s); } catch { return encodeURIComponent(s.replace(/[\uD800-\uDFFF]/g, '\uFFFD')); }
 }
 
 function splitBucketKey(key) {
@@ -486,8 +497,11 @@ function str(v, max) { return typeof v === 'string' ? v.slice(0, max) : ''; }
 
 function clean(v, max) {
   if (typeof v !== 'string') return '';
+  // control characters become spaces; lone surrogates (invalid UTF-16) become U+FFFD so the value is always encodable
   // eslint-disable-next-line no-control-regex
-  return v.replace(/[\u0000-\u001F\u007F]/g, ' ').trim().slice(0, max);
+  return v.replace(/[\u0000-\u001F\u007F]/g, ' ')
+    .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/g, (m, lead) => (lead || '') + '\uFFFD')
+    .trim().slice(0, max);
 }
 
 function refOrigin(v) {
