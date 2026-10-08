@@ -19,7 +19,8 @@ const VID_RE = /^[a-z0-9]{24}$/;
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const MAX_BODY = 8192;
 const COOKIE_MAX_AGE = 90 * 24 * 60 * 60;
-const SUMMARY_VERSION = 2;
+const SUMMARY_VERSION = 3;
+const BOT_UA = /facebookexternalhit|Facebot|Bytespider|HeadlessChrome|PhantomJS|Lighthouse/i;
 const HOUR_GRACE_MS = 2 * 60 * 1000;
 const READ_CONCURRENCY = 32;
 const HOUR_CONCURRENCY = 4;
@@ -76,7 +77,11 @@ async function event(req) {
   };
   row.flag = flagOf(row);
 
-  if (name === 'email') {
+  if (name === 'pageview') {
+    row.ua = clean(data.ua, 160);
+    row.wd = data.wd === true;
+    row.scr = clean(data.scr, 12);
+  } else if (name === 'email') {
     const email = clean(data.email, 254);
     if (!looksLikeEmail(email)) return json({ error: 'bad email' }, 400);
     row.email = email;
@@ -259,7 +264,7 @@ function newSummary(day, hour) {
 
 function newBucket() {
   return {
-    pv: [], tap: [], email: [], answer: [], seen: [],
+    pv: [], tap: [], email: [], answer: [], seen: [], bots: [],
     n_pv: 0, n_tap: 0, n_tap_card: 0, n_tap_bar: 0, n_email: 0, n_answer: 0,
     video_playing: 0, video_blocked: 0, leave: {},
     device: { ios: 0, android: 0, other: 0 },
@@ -291,6 +296,7 @@ function addRow(s, row) {
   switch (row.event) {
     case 'pageview':
       pushUnique(b.pv, row.vid); b.n_pv += 1;
+      if (isBotPageview(row)) pushUnique(b.bots, row.vid);
       if (b.device[row.device] !== undefined) b.device[row.device] += 1;
       if (b.inapp[row.inapp] !== undefined) b.inapp[row.inapp] += 1;
       break;
@@ -320,8 +326,12 @@ function addRow(s, row) {
   }
 }
 
+function isBotPageview(row) {
+  return row.wd === true || row.scr === '0x0' || BOT_UA.test(row.ua || '');
+}
+
 function mergeBucket(a, b) {
-  for (const set of ['pv', 'tap', 'email', 'answer', 'seen']) for (const v of b[set] || []) pushUnique(a[set], v);
+  for (const set of ['pv', 'tap', 'email', 'answer', 'seen', 'bots']) for (const v of b[set] || []) pushUnique(a[set], v);
   for (const n of ['n_pv', 'n_tap', 'n_tap_card', 'n_tap_bar', 'n_email', 'n_answer', 'video_playing', 'video_blocked']) a[n] += b[n] || 0;
   for (const vid of Object.keys(b.leave || {})) if (!(a.leave[vid] >= b.leave[vid])) a.leave[vid] = b.leave[vid];
   for (const k of Object.keys(a.device)) a.device[k] += (b.device && b.device[k]) || 0;
@@ -366,13 +376,71 @@ function leaveStats(map) {
   return { n: values.length, avg_seconds: values.length ? Math.round(sum / values.length) : 0 };
 }
 
+// Flags are decided per visitor, not per row: first every vid whose pageview carried bot evidence goes
+// to the bot bucket with all its rows; then a vid with a pageview in a gate source keeps that source for
+// all its rows, and a vid with a smoke pageview keeps smoke (gate > smoke > no_utm). Unique-vid lists and
+// the per-vid leave map move; per-row event counts stay where the rows were stored.
+function resolveVisitors(original) {
+  const buckets = Object.create(null);
+  for (const key of Object.keys(original)) buckets[key] = JSON.parse(JSON.stringify(original[key]));
+  const keys = Object.keys(buckets).sort();
+  const flagOfKey = (key) => splitBucketKey(key)[0];
+
+  const bot = newBucket();
+  const botVids = new Set();
+  for (const key of keys) for (const v of buckets[key].bots || []) botVids.add(v);
+  if (botVids.size) for (const key of keys) moveVids(buckets[key], bot, botVids);
+
+  const home = Object.create(null); // vid -> bucket key it belongs to
+  for (const key of keys) if (flagOfKey(key) === 'gate') for (const v of buckets[key].pv) if (!home[v]) home[v] = key;
+  for (const key of keys) if (flagOfKey(key) === 'smoke') for (const v of buckets[key].pv) if (!home[v]) home[v] = key;
+  for (const key of keys) {
+    const flag = flagOfKey(key);
+    if (flag === 'gate') continue;
+    const b = buckets[key];
+    const byTarget = new Map();
+    for (const set of ['pv', 'tap', 'email', 'answer', 'seen']) {
+      for (const v of b[set]) {
+        const target = home[v];
+        if (!target || target === key) continue;
+        if (flag === 'smoke' && flagOfKey(target) !== 'gate') continue;
+        if (!byTarget.has(target)) byTarget.set(target, new Set());
+        byTarget.get(target).add(v);
+      }
+    }
+    for (const v of Object.keys(b.leave || {})) {
+      const target = home[v];
+      if (!target || target === key) continue;
+      if (flag === 'smoke' && flagOfKey(target) !== 'gate') continue;
+      if (!byTarget.has(target)) byTarget.set(target, new Set());
+      byTarget.get(target).add(v);
+    }
+    for (const [target, vids] of byTarget) moveVids(b, buckets[target], vids);
+  }
+  return { buckets, bot };
+}
+
+function moveVids(from, to, vids) {
+  for (const set of ['pv', 'tap', 'email', 'answer', 'seen', 'bots']) {
+    const keep = [];
+    for (const v of from[set] || []) { if (vids.has(v)) pushUnique(to[set], v); else keep.push(v); }
+    from[set] = keep;
+  }
+  for (const v of Object.keys(from.leave || {})) {
+    if (!vids.has(v)) continue;
+    if (!(to.leave[v] >= from.leave[v])) to.leave[v] = from.leave[v];
+    delete from.leave[v];
+  }
+}
+
 function finalizeDay(s) {
   const sources = Object.create(null);
   const blended = newBucket();
   const smoke = newBucket();
   const noUtm = newBucket();
-  for (const key of Object.keys(s.buckets)) {
-    const b = s.buckets[key];
+  const { buckets, bot } = resolveVisitors(s.buckets);
+  for (const key of Object.keys(buckets)) {
+    const b = buckets[key];
     const [flag, source] = splitBucketKey(key);
     if (flag === 'gate') {
       sources[source] = finalizeBucket(b);
@@ -388,13 +456,13 @@ function finalizeDay(s) {
     rows: s.rows,
     sources,
     blended: finalizeBucket(blended),
-    excluded: { smoke: finalizeBucket(smoke), no_utm: finalizeBucket(noUtm) }
+    excluded: { smoke: finalizeBucket(smoke), no_utm: finalizeBucket(noUtm), bot: finalizeBucket(bot) }
   };
 }
 
 /* ---------------- CSV ---------------- */
 
-const RAW_COLUMNS = ['received', 'event', 'vid', 'flag', 'ts', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'device', 'inapp', 'ref', 'button', 'email', 'answer', 'video', 'seconds'];
+const RAW_COLUMNS = ['received', 'event', 'vid', 'flag', 'ts', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'device', 'inapp', 'ref', 'button', 'email', 'answer', 'video', 'seconds', 'ua', 'wd', 'scr'];
 const EMAIL_COLUMNS = ['received', 'email', 'vid', 'flag', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'device', 'inapp'];
 const ANSWER_COLUMNS = ['received', 'answer', 'vid', 'flag', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'device', 'inapp'];
 const SUMMARY_COLUMNS = ['day', 'scope', 'source', 'uniques', 'taps', 'emails', 'answers', 'tap_rate', 'pageviews', 'tap_events', 'tap_events_card', 'tap_events_bar', 'seen', 'video_playing', 'video_blocked', 'leave_n', 'leave_avg_seconds', 'ios', 'android', 'other', 'inapp_tiktok', 'inapp_instagram', 'inapp_facebook', 'inapp_none'];
@@ -415,6 +483,7 @@ function summaryRows(out) {
     flat(d.day, 'gate', 'blended', d.blended);
     flat(d.day, 'excluded', 'smoke', d.excluded.smoke);
     flat(d.day, 'excluded', 'no_utm', d.excluded.no_utm);
+    flat(d.day, 'excluded', 'bot', d.excluded.bot);
   }
   return rows;
 }

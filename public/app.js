@@ -150,7 +150,15 @@
 
   /* ---------- events ---------- */
 
-  send('pageview');
+  var evidence = {};
+  try {
+    evidence = {
+      ua: ua.slice(0, 160),
+      wd: navigator.webdriver === true,
+      scr: (win.screen ? win.screen.width + 'x' + win.screen.height : '').slice(0, 12)
+    };
+  } catch (e) { evidence = {}; }
+  send('pageview', evidence);
 
   var t0 = Date.now();
   var left = false;
