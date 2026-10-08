@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<title>Restline</title>
+<meta name="description" content="Heart rate without a watch. Through the phone camera.">
+<meta name="theme-color" content="#0B0B0B">
+<meta name="format-detection" content="telephone=no">
+<link rel="icon" href="/favicon.ico" sizes="32x32">
+<link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32.png">
+<link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+<link rel="preload" href="/assets/inter.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/media/restline-page-poster.jpg" as="image" fetchpriority="high">
+<link rel="stylesheet" href="/styles.css">
+<script src="/app.js" defer></script>
+</head>
+<body>
+<div class="glow" aria-hidden="true"></div>
+
+<header class="col header">
+  <img class="logo" src="/assets/icon-88.png" width="22" height="22" alt="">
+  <span class="brand">Restline</span>
+</header>
+
+<main class="col">
+  <section class="hero">
+    <p class="pill"><span class="dot" aria-hidden="true"></span>Pulse · Beat spacing · A personal normal</p>
+    <h1>Heart rate without a watch.</h1>
+    <p class="sub">Through the phone camera.</p>
+  </section>
+
+  <section class="clip-wrap">
+    <div class="clip">
+      <video class="clip-video" id="clip" autoplay muted loop playsinline preload="metadata" poster="/media/restline-page-poster.jpg" width="720" height="1280" disablepictureinpicture disableremoteplayback>
+        <source src="/media/restline-page-clip-720.mp4" type="video/mp4">
+      </video>
+    </div>
+    <p class="caption">Shown: a pulse read through the phone camera. App not released yet.</p>
+  </section>
+
+  <section class="section">
+    <h2 class="reveal">What it does.</h2>
+    <div class="card reveal">
+      <svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#E0252B" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20.5s-7.5-4.6-7.5-10.3A4.2 4.2 0 0 1 12 7.9a4.2 4.2 0 0 1 7.5 2.3c0 5.7-7.5 10.3-7.5 10.3Z"/></svg>
+      <h3>Pulse</h3>
+      <p>Heart rate from the fingertip. It reads through the rear camera with the flash on. About thirty seconds, with the live wave for the whole read — not a short preview behind a paywall.</p>
+    </div>
+    <div class="card reveal">
+      <svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#E0252B" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 12h4l2.2-5.5 3.1 11 2.7-7.5 1.5 2h5.5"/></svg>
+      <h3>Beat spacing (HRV)</h3>
+      <p>The gap between beats, shown as a number and its trend. No score.</p>
+    </div>
+    <div class="card reveal">
+      <svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#E0252B" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 18h18M7.5 15a4.5 4.5 0 0 1 9 0M12 7V4.5M5.6 9.1 4 7.5M18.4 9.1 20 7.5M5 15H3M21 15h-2"/></svg>
+      <h3>A personal normal</h3>
+      <p>After seven mornings of measuring, each morning's pulse against its own normal range — above or below those previous mornings.</p>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2 class="reveal">How it works.</h2>
+    <div class="card reveal">
+      <ol class="steps">
+        <li><span class="num" aria-hidden="true">1</span><p><b>Finger on the rear camera,</b> covering the lens next to the flash.</p></li>
+        <li><span class="num" aria-hidden="true">2</span><p><b>Hold still.</b> The wave appears once the finger is seen — never before. No wave appears without a fingertip.</p></li>
+        <li><span class="num" aria-hidden="true">3</span><p><b>About thirty seconds later:</b> pulse and beat spacing, with the readings saved on the phone.</p></li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2 class="reveal">When.</h2>
+    <p class="body reveal"><b>Same time, seated, still.</b> In the morning, after waking and before coffee — the resting pulse the way runners have measured it since stopwatches, not a watch's average of the day.</p>
+    <p class="body reveal">Takes a minute. Any other time of day is a spot check, and it says so.</p>
+  </section>
+
+  <section class="section">
+    <h2 class="reveal">Restline or a watch.</h2>
+    <div class="card card-table reveal">
+      <table class="compare">
+        <thead>
+          <tr><th scope="col"></th><th scope="col">A watch</th><th scope="col" class="rl">Restline</th></tr>
+        </thead>
+        <tbody>
+          <tr><th scope="row">Measures</th><td>All day, on the wrist</td><td class="rl">One morning read, on the fingertip</td></tr>
+          <tr><th scope="row">Needs</th><td>A device, a charger, a wrist</td><td class="rl">The phone already in the pocket</td></tr>
+          <tr><th scope="row">Shows</th><td>Averages and scores</td><td class="rl">Pulse, beat spacing (HRV), a personal normal</td></tr>
+          <tr><th scope="row">Costs</th><td>Hundreds, once</td><td class="rl">$9.99 a week, cancel in the app</td></tr>
+          <tr><th scope="row">Best for</th><td>Tracking all day and during workouts</td><td class="rl">A morning check, same time, seated, still</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="body closing reveal">Continuous tracking and alerts through the day? Then a watch is the one.</p>
+  </section>
+
+  <section class="section">
+    <h2 class="reveal">Fair questions.</h2>
+    <div class="card reveal">
+      <dl class="faq">
+        <div><dt>Is a camera pulse real?</dt><dd>Open the phone's own camera in video, flash on, finger on the lens: the pulse is visible. Then count a wrist pulse for a minute and compare.</dd></div>
+        <div><dt>What if the finger slips?</dt><dd>A pulse that isn't there is refused — it won't be reported. A read taken while the heart is still settling is refused too, with the reason.</dd></div>
+        <div><dt>A weekly subscription?</dt><dd>The price is on this page. Cancel is in the app.</dd></div>
+        <div><dt>Does it judge the number?</dt><dd>A number and its trend. No AI assistants, no ready-made plans, no verdict on a single reading. Not a medical device.</dd></div>
+        <div><dt>Blood pressure or oxygen?</dt><dd>No. A phone camera can't, and this one doesn't pretend to.</dd></div>
+      </dl>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="card price reveal" id="price">
+      <p class="eyebrow">ONE PRICE</p>
+      <p class="amount"><span class="big">$9.99</span> <span class="per">a week</span></p>
+      <p class="terms">No trial. Cancel in the app.</p>
+      <hr class="rule">
+      <ul class="included">
+        <li><svg class="check" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#E0252B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 8.5 6 12l7.5-8"/></svg>Each morning's pulse against its own normal range, after seven mornings</li>
+        <li><svg class="check" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#E0252B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 8.5 6 12l7.5-8"/></svg>Beat spacing the same way</li>
+        <li><svg class="check" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#E0252B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 8.5 6 12l7.5-8"/></svg>Full history and trend charts</li>
+        <li><svg class="check" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#E0252B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 8.5 6 12l7.5-8"/></svg>CSV export and Apple Health write</li>
+        <li><svg class="check" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#E0252B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 8.5 6 12l7.5-8"/></svg>Morning reminders</li>
+      </ul>
+      <button class="btn btn-price" type="button" data-tap="card"><span>Get it</span><span class="sep" aria-hidden="true"></span><span>$9.99 a week</span></button>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2 class="reveal">Private by design.</h2>
+    <p class="body reveal">No ads. No tracking prompt. Readings never leave the phone. The privacy policy is short enough to read — <a class="link" href="/privacy">read it</a>.</p>
+  </section>
+</main>
+
+<footer class="footer">
+  <div class="col">
+    <p class="foot-brand"><img class="logo" src="/assets/icon-88.png" width="20" height="20" alt=""><span class="brand">Restline</span><span class="tagline">· Not released yet.</span></p>
+    <p class="foot-links"><a href="/privacy">Privacy</a><a href="mailto:hello@restline.app">hello@restline.app</a></p>
+    <p class="foot-copy">© 2026 Restline. Not a medical device.</p>
+  </div>
+</footer>
+
+<div class="bar">
+  <div class="col">
+    <button class="btn btn-price" type="button" data-tap="bar"><span>Get it</span><span class="sep" aria-hidden="true"></span><span>$9.99 a week</span></button>
+    <p class="bar-note">No trial. Cancel in the app.</p>
+  </div>
+</div>
+
+<div class="sheet-root" id="sheet" hidden>
+  <div class="sheet-backdrop" data-close></div>
+  <div class="sheet" id="sheet-panel" role="dialog" aria-modal="true" aria-labelledby="sheet-title-1" tabindex="-1">
+    <div class="grabber" aria-hidden="true"></div>
+    <button class="sheet-x" type="button" data-close aria-label="Close"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M2 2l10 10M12 2 2 12"/></svg></button>
+
+    <div class="step" id="step-1">
+      <h2 class="sheet-title" id="sheet-title-1">Not released yet.</h2>
+      <p class="sheet-body">Nothing was charged. Leave an email and the release day gets sent — one email, nothing else.</p>
+      <form id="email-form" novalidate>
+        <input class="field" id="email" type="email" name="email" placeholder="Email" autocomplete="email" inputmode="email" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="send" required>
+        <button class="btn" type="submit">Notify at release</button>
+        <button class="btn-text" type="button" data-close>No thanks</button>
+      </form>
+    </div>
+
+    <div class="step" id="step-2" hidden>
+      <h2 class="sheet-title" id="sheet-title-2"><svg class="noted" width="28" height="28" viewBox="0 0 28 28" fill="none" stroke="#E0252B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="14" cy="14" r="12"/><path d="M8.5 14.5 12 18l7.5-8"/></svg>Noted.</h2>
+      <p class="sheet-body">One email, on the release day. Nothing before it.</p>
+      <p class="sheet-q">One question: what else would you want it to measure?</p>
+      <form id="answer-form" novalidate>
+        <input class="field" id="answer" type="text" name="answer" placeholder="One line is plenty" autocomplete="off" maxlength="500" enterkeyhint="send">
+        <button class="btn" type="submit">Send</button>
+        <button class="btn-text" type="button" data-close>Done</button>
+      </form>
+    </div>
+  </div>
+</div>
+</body>
+</html>
