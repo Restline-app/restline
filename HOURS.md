@@ -10,5 +10,6 @@ Time spent on the landing page, in half hours.
 | 2026-10-08 | 0.5 | Screenshots against the boards, Lighthouse, first deploy |
 | 2026-10-08 | 0.5 | /terms page and footer links, header and title check, click-id and referrer handling |
 | 2026-10-08 | 0.5 | Review pass: admin hardening, in-app browser viewport, font fallback without layout shift, accessibility, type scale and greys re-measured against the boards |
+| 2026-10-09 | 0.5 | Admin summary split by creative (utm_content) with a differential test against the previous version, privacy retention line, page clip v2 |
 
-Total: 3.0
+Total: 3.5

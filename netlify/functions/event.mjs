@@ -19,7 +19,7 @@ const VID_RE = /^[a-z0-9]{24}$/;
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const MAX_BODY = 8192;
 const COOKIE_MAX_AGE = 90 * 24 * 60 * 60;
-const SUMMARY_VERSION = 3;
+const SUMMARY_VERSION = 4;
 const BOT_UA = /facebookexternalhit|Facebot|meta-external|Bytespider|TikTokSpider|Googlebot|AdsBot|HeadlessChrome|PhantomJS|Lighthouse/i;
 const HOUR_GRACE_MS = 2 * 60 * 1000;
 const READ_CONCURRENCY = 32;
@@ -260,16 +260,26 @@ function newSummary(day, hour) {
   return { v: SUMMARY_VERSION, day, hour, rows: 0, failed: 0, buckets: Object.create(null) };
 }
 
-// buckets are keyed by flag|source; leave maps vid -> largest seconds seen (one beacon per hide, cumulative)
+// buckets are keyed by flag|source; leave maps vid -> largest seconds seen (one beacon per hide, cumulative).
+// A gate bucket also splits its rows by creative under content["c:" + utm_content] ("c:none" when empty),
+// each entry having the same shape as the bucket's own counts.
 
-function newBucket() {
+function newCounts() {
   return {
-    pv: [], tap: [], email: [], answer: [], seen: [], bots: [],
+    pv: [], tap: [], email: [], answer: [], seen: [],
     n_pv: 0, n_tap: 0, n_tap_card: 0, n_tap_bar: 0, n_email: 0, n_answer: 0,
     video_playing: 0, video_blocked: 0, leave: {},
     device: { ios: 0, android: 0, other: 0 },
     inapp: { tiktok: 0, instagram: 0, facebook: 0, none: 0 }
   };
+}
+
+function newBucket() {
+  return { ...newCounts(), bots: [], content: {} };
+}
+
+function contentKey(row) {
+  return 'c:' + (row.utm_content || 'none');
 }
 
 function bucketKey(row) {
@@ -293,10 +303,18 @@ function addRow(s, row) {
   s.rows += 1;
   const key = bucketKey(row);
   const b = s.buckets[key] || (s.buckets[key] = newBucket());
+  addCounts(b, row);
+  if (row.event === 'pageview' && isBotPageview(row)) pushUnique(b.bots, row.vid);
+  if ((row.flag || flagOf(row)) === 'gate') {
+    const ck = contentKey(row);
+    addCounts(b.content[ck] || (b.content[ck] = newCounts()), row);
+  }
+}
+
+function addCounts(b, row) {
   switch (row.event) {
     case 'pageview':
       pushUnique(b.pv, row.vid); b.n_pv += 1;
-      if (isBotPageview(row)) pushUnique(b.bots, row.vid);
       if (b.device[row.device] !== undefined) b.device[row.device] += 1;
       if (b.inapp[row.inapp] !== undefined) b.inapp[row.inapp] += 1;
       break;
@@ -330,12 +348,18 @@ function isBotPageview(row) {
   return row.wd === true || row.scr === '0x0' || BOT_UA.test(row.ua || '');
 }
 
-function mergeBucket(a, b) {
-  for (const set of ['pv', 'tap', 'email', 'answer', 'seen', 'bots']) for (const v of b[set] || []) pushUnique(a[set], v);
+function mergeCounts(a, b) {
+  for (const set of ['pv', 'tap', 'email', 'answer', 'seen']) for (const v of b[set] || []) pushUnique(a[set], v);
   for (const n of ['n_pv', 'n_tap', 'n_tap_card', 'n_tap_bar', 'n_email', 'n_answer', 'video_playing', 'video_blocked']) a[n] += b[n] || 0;
   for (const vid of Object.keys(b.leave || {})) if (!(a.leave[vid] >= b.leave[vid])) a.leave[vid] = b.leave[vid];
   for (const k of Object.keys(a.device)) a.device[k] += (b.device && b.device[k]) || 0;
   for (const k of Object.keys(a.inapp)) a.inapp[k] += (b.inapp && b.inapp[k]) || 0;
+}
+
+function mergeBucket(a, b) {
+  mergeCounts(a, b);
+  for (const v of b.bots || []) pushUnique(a.bots, v);
+  for (const ck of Object.keys(b.content || {})) mergeCounts(a.content[ck] || (a.content[ck] = newCounts()), b.content[ck]);
 }
 
 function mergeSummary(target, s) {
@@ -368,6 +392,12 @@ function finalizeBucket(b) {
     device: { ...b.device },
     inapp: { ...b.inapp }
   };
+}
+
+function finalizeSource(b) {
+  const content = Object.create(null);
+  for (const ck of Object.keys(b.content || {}).sort()) content[ck.slice(2)] = finalizeBucket(b.content[ck]);
+  return { ...finalizeBucket(b), content };
 }
 
 function leaveStats(map) {
@@ -414,21 +444,48 @@ function resolveVisitors(original) {
     };
     for (const set of ['pv', 'tap', 'email', 'answer', 'seen']) for (const v of b[set]) consider(v);
     for (const v of Object.keys(b.leave || {})) consider(v);
-    for (const [target, vids] of byTarget) moveVids(b, buckets[target], vids);
+    for (const [target, vids] of byTarget) {
+      const t = buckets[target];
+      // into a gate bucket (from no_utm): the untagged rows join the creative of the visitor's gate pageview;
+      // with more than one, the first creative in alphabetical order
+      const pick = flagOfKey(target) === 'gate' ? (v) => homeCreative(t, v) : null;
+      moveVids(b, t, vids, pick);
+    }
   }
   return { buckets, bot };
 }
 
-function moveVids(from, to, vids) {
+function homeCreative(bucket, vid) {
+  for (const ck of Object.keys(bucket.content || {}).sort()) if (bucket.content[ck].pv.includes(vid)) return ck;
+  return 'c:none';
+}
+
+// Moves vids from one bucket to another: top-level lists and the leave map go to `to`; their entries in
+// `from`'s creatives are dropped; when `pick` is given (a gate target) they also join to.content[pick(vid)].
+function moveVids(from, to, vids, pick) {
+  const sub = (v) => {
+    const ck = pick(v);
+    return to.content[ck] || (to.content[ck] = newCounts());
+  };
   for (const set of ['pv', 'tap', 'email', 'answer', 'seen', 'bots']) {
     const keep = [];
-    for (const v of from[set] || []) { if (vids.has(v)) pushUnique(to[set], v); else keep.push(v); }
+    for (const v of from[set] || []) {
+      if (!vids.has(v)) { keep.push(v); continue; }
+      pushUnique(to[set], v);
+      if (pick && set !== 'bots') pushUnique(sub(v)[set], v);
+    }
     from[set] = keep;
   }
   for (const v of Object.keys(from.leave || {})) {
     if (!vids.has(v)) continue;
     if (!(to.leave[v] >= from.leave[v])) to.leave[v] = from.leave[v];
+    if (pick) { const c = sub(v); if (!(c.leave[v] >= from.leave[v])) c.leave[v] = from.leave[v]; }
     delete from.leave[v];
+  }
+  for (const ck of Object.keys(from.content || {})) {
+    const c = from.content[ck];
+    for (const set of ['pv', 'tap', 'email', 'answer', 'seen']) c[set] = c[set].filter((v) => !vids.has(v));
+    for (const v of Object.keys(c.leave || {})) if (vids.has(v)) delete c.leave[v];
   }
 }
 
@@ -442,7 +499,7 @@ function finalizeDay(s) {
     const b = buckets[key];
     const [flag, source] = splitBucketKey(key);
     if (flag === 'gate') {
-      sources[source] = finalizeBucket(b);
+      sources[source] = finalizeSource(b);
       mergeBucket(blended, b);
     } else if (flag === 'smoke') {
       mergeBucket(smoke, b);
@@ -464,12 +521,12 @@ function finalizeDay(s) {
 const RAW_COLUMNS = ['received', 'event', 'vid', 'flag', 'ts', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'device', 'inapp', 'ref', 'button', 'email', 'answer', 'video', 'seconds', 'ua', 'wd', 'scr'];
 const EMAIL_COLUMNS = ['received', 'email', 'vid', 'flag', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'device', 'inapp'];
 const ANSWER_COLUMNS = ['received', 'answer', 'vid', 'flag', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'device', 'inapp'];
-const SUMMARY_COLUMNS = ['day', 'scope', 'source', 'uniques', 'taps', 'emails', 'answers', 'tap_rate', 'pageviews', 'tap_events', 'tap_events_card', 'tap_events_bar', 'seen', 'video_playing', 'video_blocked', 'leave_n', 'leave_avg_seconds', 'ios', 'android', 'other', 'inapp_tiktok', 'inapp_instagram', 'inapp_facebook', 'inapp_none'];
+const SUMMARY_COLUMNS = ['day', 'scope', 'source', 'content', 'uniques', 'taps', 'emails', 'answers', 'tap_rate', 'pageviews', 'tap_events', 'tap_events_card', 'tap_events_bar', 'seen', 'video_playing', 'video_blocked', 'leave_n', 'leave_avg_seconds', 'ios', 'android', 'other', 'inapp_tiktok', 'inapp_instagram', 'inapp_facebook', 'inapp_none'];
 
 function summaryRows(out) {
   const rows = [];
-  const flat = (day, scope, source, f) => rows.push({
-    day, scope, source,
+  const flat = (day, scope, source, content, f) => rows.push({
+    day, scope, source, content,
     uniques: f.uniques, taps: f.taps, emails: f.emails, answers: f.answers, tap_rate: f.tap_rate,
     pageviews: f.pageviews, tap_events: f.tap_events, tap_events_card: f.tap_events_card, tap_events_bar: f.tap_events_bar,
     seen: f.seen, video_playing: f.video.playing, video_blocked: f.video.blocked,
@@ -478,11 +535,14 @@ function summaryRows(out) {
     inapp_tiktok: f.inapp.tiktok, inapp_instagram: f.inapp.instagram, inapp_facebook: f.inapp.facebook, inapp_none: f.inapp.none
   });
   for (const d of [...out.days, out.total]) {
-    for (const source of Object.keys(d.sources)) flat(d.day, 'gate', source, d.sources[source]);
-    flat(d.day, 'gate', 'blended', d.blended);
-    flat(d.day, 'excluded', 'smoke', d.excluded.smoke);
-    flat(d.day, 'excluded', 'no_utm', d.excluded.no_utm);
-    flat(d.day, 'excluded', 'bot', d.excluded.bot);
+    for (const source of Object.keys(d.sources)) {
+      flat(d.day, 'gate', source, '', d.sources[source]);
+      for (const c of Object.keys(d.sources[source].content)) flat(d.day, 'gate', source, c, d.sources[source].content[c]);
+    }
+    flat(d.day, 'gate', 'blended', '', d.blended);
+    flat(d.day, 'excluded', 'smoke', '', d.excluded.smoke);
+    flat(d.day, 'excluded', 'no_utm', '', d.excluded.no_utm);
+    flat(d.day, 'excluded', 'bot', '', d.excluded.bot);
   }
   return rows;
 }
