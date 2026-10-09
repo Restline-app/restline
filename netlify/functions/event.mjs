@@ -5,11 +5,14 @@
 // Rows are never deduped on write. Closed hours are summarised once (counts and vid lists only, no
 // addresses or answers) and cached in the "summaries" store; the email and answer tables always read
 // the raw rows, so deleting a row in "events" is the only deletion needed.
-// Rows with utm_campaign=smoke and rows without utm_source are stored but kept out of the gate counts.
+// Rows with utm_campaign=smoke, rows without utm_source and visitors with a gate pageview received before
+// GATE_START are stored but kept out of the gate counts.
 
 import { getStore } from '@netlify/blobs';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 
+// Gate A starts 2026-10-13 12:00 AM CDT. A visitor with a gate pageview received (server time) before it is excluded for good.
+const GATE_START = Date.parse('2026-10-13T05:00:00.000Z');
 const EVENTS = new Set(['pageview', 'tap', 'email', 'answer', 'video', 'seen', 'leave']);
 const DEVICES = new Set(['ios', 'android', 'other']);
 const INAPPS = new Set(['tiktok', 'instagram', 'facebook', 'none']);
@@ -19,7 +22,7 @@ const VID_RE = /^[a-z0-9]{24}$/;
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const MAX_BODY = 8192;
 const COOKIE_MAX_AGE = 90 * 24 * 60 * 60;
-const SUMMARY_VERSION = 4;
+const SUMMARY_VERSION = 5;
 const BOT_UA = /facebookexternalhit|Facebot|meta-external|Bytespider|TikTokSpider|Googlebot|AdsBot|HeadlessChrome|PhantomJS|Lighthouse/i;
 const HOUR_GRACE_MS = 2 * 60 * 1000;
 const READ_CONCURRENCY = 32;
@@ -148,7 +151,8 @@ async function admin(req, url) {
   const events = getStore({ name: 'events', consistency: 'strong' });
   const summaries = getStore({ name: 'summaries', consistency: 'strong' });
 
-  const days = (await listDirs(events, '')).filter((d) => DAY_RE.test(d) && (!from || d >= from) && (!to || d <= to)).sort();
+  const allDays = (await listDirs(events, '')).filter((d) => DAY_RE.test(d)).sort();
+  const days = allDays.filter((d) => (!from || d >= from) && (!to || d <= to));
 
   if (table === 'raw') {
     if (!only) return json({ error: 'table=raw needs day=YYYY-MM-DD' }, 400);
@@ -173,26 +177,39 @@ async function admin(req, url) {
   const perDay = [];
   const pending = [];
   let failed = 0;
+  const summarize = (day, hours) => mapLimit(hours, HOUR_CONCURRENCY, async (hour) => {
+    if (Date.now() > deadline) { pending.push(`${day}/${hour}`); return null; }
+    try {
+      return await hourSummary(events, summaries, day, hour);
+    } catch (err) {
+      console.error('hour failed', day, hour, err);
+      const s = newSummary(day, hour);
+      s.failed = 1;
+      return s;
+    }
+  });
   for (const day of days) {
     const hours = (await listDirs(events, `${day}/`)).sort();
     const merged = newSummary(day, '');
-    const results = await mapLimit(hours, HOUR_CONCURRENCY, async (hour) => {
-      if (Date.now() > deadline) { pending.push(`${day}/${hour}`); return null; }
-      try {
-        return await hourSummary(events, summaries, day, hour);
-      } catch (err) {
-        console.error('hour failed', day, hour, err);
-        const s = newSummary(day, hour);
-        s.failed = 1;
-        return s;
-      }
-    });
-    for (const h of results) {
+    for (const h of await summarize(day, hours)) {
       if (!h) continue;
       failed += h.failed || 0;
       mergeSummary(merged, h);
     }
     perDay.push(merged);
+  }
+  // Pre-start visitors are excluded for good, so their ids come from every hour before GATE_START,
+  // including the hours of days outside the requested range.
+  const prestart = new Set();
+  for (const d of perDay) for (const v of d.pre) prestart.add(v);
+  for (const day of allDays) {
+    if (days.includes(day) || Date.parse(`${day}T00:00:00Z`) >= GATE_START) continue;
+    const hours = (await listDirs(events, `${day}/`)).filter((h) => Date.parse(`${day}T${h}:00:00Z`) < GATE_START).sort();
+    for (const h of await summarize(day, hours)) {
+      if (!h) continue;
+      failed += h.failed || 0;
+      for (const v of h.pre || []) prestart.add(v);
+    }
   }
   const total = newSummary('', '');
   for (const d of perDay) mergeSummary(total, d);
@@ -207,8 +224,8 @@ async function admin(req, url) {
     to: days[days.length - 1] || null,
     partial,
     pending,
-    days: perDay.map(finalizeDay),
-    total: finalizeDay(total),
+    days: perDay.map((d) => finalizeDay(d, prestart)),
+    total: finalizeDay(total, prestart),
     emails: emails.rows.map((r) => pick(r, EMAIL_COLUMNS)),
     answers: answers.rows.map((r) => pick(r, ANSWER_COLUMNS))
   };
@@ -223,7 +240,7 @@ async function hourSummary(events, summaries, day, hour) {
   const closed = Number.isFinite(hourStart) && Date.now() > hourStart + 3600 * 1000 + HOUR_GRACE_MS;
   if (closed) {
     const cached = await summaries.get(cacheKey, { type: 'json' }).catch(() => null);
-    if (cached && cached.v === SUMMARY_VERSION) return cached;
+    if (cached && cached.v === SUMMARY_VERSION && cached.gs === GATE_START) return cached; // a new GATE_START rebuilds the caches
   }
   const keys = await listKeys(events, `${day}/${hour}/`);
   const read = await readRows(events, keys, Infinity);
@@ -257,12 +274,13 @@ function keyEvent(key) {
 /* ---------------- summaries ---------------- */
 
 function newSummary(day, hour) {
-  return { v: SUMMARY_VERSION, day, hour, rows: 0, failed: 0, buckets: Object.create(null) };
+  return { v: SUMMARY_VERSION, gs: GATE_START, day, hour, rows: 0, failed: 0, pre: [], buckets: Object.create(null) };
 }
 
 // buckets are keyed by flag|source; leave maps vid -> largest seconds seen (one beacon per hide, cumulative).
 // A gate bucket also splits its rows by creative under content["c:" + utm_content] ("c:none" when empty),
-// each entry having the same shape as the bucket's own counts.
+// each entry having the same shape as the bucket's own counts. pre lists the vids with a gate pageview
+// received before GATE_START.
 
 function newCounts() {
   return {
@@ -308,6 +326,7 @@ function addRow(s, row) {
   if ((row.flag || flagOf(row)) === 'gate') {
     const ck = contentKey(row);
     addCounts(b.content[ck] || (b.content[ck] = newCounts()), row);
+    if (row.event === 'pageview' && Date.parse(row.received) < GATE_START) pushUnique(s.pre, row.vid);
   }
 }
 
@@ -366,6 +385,7 @@ function mergeSummary(target, s) {
   if (!s) return;
   target.rows += s.rows || 0;
   target.failed += s.failed || 0;
+  for (const v of s.pre || []) pushUnique(target.pre, v);
   for (const key of Object.keys(s.buckets || {})) {
     if (!target.buckets[key]) target.buckets[key] = newBucket();
     mergeBucket(target.buckets[key], s.buckets[key]);
@@ -406,13 +426,15 @@ function leaveStats(map) {
   return { n: values.length, avg_seconds: values.length ? Math.round(sum / values.length) : 0 };
 }
 
-// Flags are decided per visitor, not per row, in the order bot > smoke > gate > no_utm: first every vid
-// whose pageview carried bot evidence goes to the bot bucket with all its rows; then a vid with a smoke
-// pageview is smoke everywhere (it is pulled out of every other bucket, gate buckets included); a vid
-// with a gate pageview keeps that source for its no_utm rows (gate buckets keep each other's vids); a
-// no_utm vid with no home stays. Unique-vid lists and the per-vid leave map move; per-row event counts
-// stay where the rows were stored.
-function resolveVisitors(original) {
+// Flags are decided per visitor, not per row, in the order bot > smoke > prestart > gate > no_utm: first
+// every vid whose pageview carried bot evidence goes to the bot bucket with all its rows; a vid with a
+// smoke pageview is smoke; every other vid in `prestart` (a gate pageview received before GATE_START,
+// on any day) leaves every gate and no_utm bucket and every creative for the prestart bucket, with all
+// its rows, rows after the start included; then a smoke vid is pulled out of every other bucket, gate
+// buckets included; a vid with a gate pageview keeps that source for its no_utm rows (gate buckets keep
+// each other's vids); a no_utm vid with no home stays. Unique-vid lists and the per-vid leave map move;
+// per-row event counts stay where the rows were stored.
+function resolveVisitors(original, prestart) {
   const buckets = Object.create(null);
   for (const key of Object.keys(original)) buckets[key] = JSON.parse(JSON.stringify(original[key]));
   const keys = Object.keys(buckets).sort();
@@ -422,6 +444,18 @@ function resolveVisitors(original) {
   const botVids = new Set();
   for (const key of keys) for (const v of buckets[key].bots || []) botVids.add(v);
   if (botVids.size) for (const key of keys) moveVids(buckets[key], bot, botVids);
+
+  const smokeVids = new Set();
+  for (const key of keys) if (flagOfKey(key) === 'smoke') for (const v of buckets[key].pv) smokeVids.add(v);
+  const pre = newBucket();
+  const preVids = new Set();
+  for (const v of prestart || []) if (!botVids.has(v) && !smokeVids.has(v)) preVids.add(v);
+  if (preVids.size) {
+    for (const key of keys) {
+      const flag = flagOfKey(key);
+      if (flag === 'gate' || flag === 'no_utm') moveVids(buckets[key], pre, preVids);
+    }
+  }
 
   const home = Object.create(null); // vid -> bucket key it belongs to; smoke pageviews first, then gate
   for (const key of keys) if (flagOfKey(key) === 'smoke') for (const v of buckets[key].pv) if (!home[v]) home[v] = key;
@@ -452,7 +486,7 @@ function resolveVisitors(original) {
       moveVids(b, t, vids, pick);
     }
   }
-  return { buckets, bot };
+  return { buckets, bot, prestart: pre };
 }
 
 function homeCreative(bucket, vid) {
@@ -489,12 +523,12 @@ function moveVids(from, to, vids, pick) {
   }
 }
 
-function finalizeDay(s) {
+function finalizeDay(s, prestart) {
   const sources = Object.create(null);
   const blended = newBucket();
   const smoke = newBucket();
   const noUtm = newBucket();
-  const { buckets, bot } = resolveVisitors(s.buckets);
+  const { buckets, bot, prestart: pre } = resolveVisitors(s.buckets, prestart);
   for (const key of Object.keys(buckets)) {
     const b = buckets[key];
     const [flag, source] = splitBucketKey(key);
@@ -512,7 +546,7 @@ function finalizeDay(s) {
     rows: s.rows,
     sources,
     blended: finalizeBucket(blended),
-    excluded: { smoke: finalizeBucket(smoke), no_utm: finalizeBucket(noUtm), bot: finalizeBucket(bot) }
+    excluded: { smoke: finalizeBucket(smoke), no_utm: finalizeBucket(noUtm), bot: finalizeBucket(bot), prestart: finalizeBucket(pre) }
   };
 }
 
@@ -543,6 +577,7 @@ function summaryRows(out) {
     flat(d.day, 'excluded', 'smoke', '', d.excluded.smoke);
     flat(d.day, 'excluded', 'no_utm', '', d.excluded.no_utm);
     flat(d.day, 'excluded', 'bot', '', d.excluded.bot);
+    flat(d.day, 'excluded', 'prestart', '', d.excluded.prestart);
   }
   return rows;
 }

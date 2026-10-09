@@ -690,8 +690,17 @@ h3 {
 
 .field::placeholder { color: var(--fg-3); opacity: 1; }
 .field:focus { border-color: var(--focus); }
-.field[aria-invalid="true"] { border-color: rgba(255, 255, 255, 0.6); }
+.field[aria-invalid="true"] { border-color: var(--red); }
+.field.shake { animation: shake 0.3s ease-in-out; }
 .field + .btn { margin-top: 12px; }
+
+@keyframes shake {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  20% { transform: translate3d(-5px, 0, 0); }
+  40% { transform: translate3d(5px, 0, 0); }
+  60% { transform: translate3d(-3px, 0, 0); }
+  80% { transform: translate3d(3px, 0, 0); }
+}
 
 .btn[disabled] { opacity: 0.7; cursor: default; }
 
@@ -727,5 +736,6 @@ html.js .reveal.now { transition: none; }
 @media (prefers-reduced-motion: reduce) {
   .glow { animation: none; }
   .sheet { transition: none; }
+  .field.shake { animation: none; }
   html.js .reveal { opacity: 1; transform: none; transition: none; }
 }

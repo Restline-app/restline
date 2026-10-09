@@ -278,6 +278,7 @@
     showStep(1);
     emailInput.value = '';
     emailInput.removeAttribute('aria-invalid');
+    emailInput.classList.remove('shake');
     answerInput.value = '';
     sheetRoot.hidden = false;
     root.classList.add('sheet-open');
@@ -361,6 +362,9 @@
     var v = (emailInput.value || '').trim();
     if (!validEmail(v)) {
       emailInput.setAttribute('aria-invalid', 'true');
+      emailInput.classList.remove('shake');
+      void emailInput.offsetWidth; // restarts the shake on a repeat press
+      emailInput.classList.add('shake');
       emailInput.focus();
       return;
     }
@@ -374,7 +378,8 @@
     });
   });
 
-  emailInput.addEventListener('input', function () { emailInput.removeAttribute('aria-invalid'); });
+  emailInput.addEventListener('input', function () { emailInput.removeAttribute('aria-invalid'); emailInput.classList.remove('shake'); });
+  emailInput.addEventListener('animationend', function () { emailInput.classList.remove('shake'); });
 
   answerForm.addEventListener('submit', function (ev) {
     ev.preventDefault();
