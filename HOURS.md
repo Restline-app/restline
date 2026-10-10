@@ -12,5 +12,6 @@ Time spent on the landing page, in half hours.
 | 2026-10-08 | 0.5 | Review pass: admin hardening, in-app browser viewport, font fallback without layout shift, accessibility, type scale and greys re-measured against the boards |
 | 2026-10-09 | 0.5 | Admin summary split by creative (utm_content) with a differential test against the previous version, privacy retention line |
 | 2026-10-09 | 0.5 | Pre-start rule (GATE_START) with boundary tests and a differential test against the version on main, email error state |
+| 2026-10-10 | 0.5 | Page clip v2: hash and size checked, format compared with the previous clip, file and source swapped, playback checked locally |
 
-Total: 4.0
+Total: 4.5
