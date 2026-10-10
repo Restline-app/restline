@@ -22,8 +22,14 @@ const VID_RE = /^[a-z0-9]{24}$/;
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const MAX_BODY = 8192;
 const COOKIE_MAX_AGE = 90 * 24 * 60 * 60;
-const SUMMARY_VERSION = 5;
-const BOT_UA = /facebookexternalhit|Facebot|meta-external|Bytespider|TikTokSpider|Googlebot|AdsBot|HeadlessChrome|PhantomJS|Lighthouse/i;
+const SUMMARY_VERSION = 6;
+// A pageview is a bot's when any of these holds. Oct 8: wd true (navigator.webdriver), scr 0x0, or a user
+// agent matching BOT_UA. Oct 10, pre-registered from the smoke rows before any gate data: scr 2000x2000; a
+// user agent that starts with "Instagram " plus a digit (Meta's link checkers carry the Instagram app's
+// network label, every real in-app browser starts "Mozilla/5.0"), see APP_LABEL_UA; "Bulid/" in the user
+// agent (TikTok's link checker), added to BOT_UA.
+const BOT_UA = /facebookexternalhit|Facebot|meta-external|Bytespider|TikTokSpider|Googlebot|AdsBot|HeadlessChrome|PhantomJS|Lighthouse|Bulid\//i;
+const APP_LABEL_UA = /^Instagram \d/;
 const HOUR_GRACE_MS = 2 * 60 * 1000;
 const READ_CONCURRENCY = 32;
 const HOUR_CONCURRENCY = 4;
@@ -364,7 +370,8 @@ function addCounts(b, row) {
 }
 
 function isBotPageview(row) {
-  return row.wd === true || row.scr === '0x0' || BOT_UA.test(row.ua || '');
+  const ua = row.ua || '';
+  return row.wd === true || row.scr === '0x0' || row.scr === '2000x2000' || APP_LABEL_UA.test(ua) || BOT_UA.test(ua);
 }
 
 function mergeCounts(a, b) {
